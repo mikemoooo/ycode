@@ -48,6 +48,8 @@ const EXCLUDED_COLUMNS: Record<string, string[]> = {
 const UUID_COLUMNS = [
   // Primary keys
   'id',
+  'uuid', // collections.uuid has a global UNIQUE constraint
+
   // Page-related FKs
   'page_id',
   'page_folder_id',
