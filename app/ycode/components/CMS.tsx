@@ -1518,7 +1518,7 @@ const CMS = React.memo(function CMS() {
                     ) : null;
 
                     return (
-                      <th key={field.id} className="px-4 py-5 text-left font-normal sticky top-0 z-10 bg-background border-b border-border">
+                      <th key={field.id} className="px-4 py-5 text-left font-normal sticky top-0 z-20 bg-background border-b border-border">
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => !showSkeleton && handleColumnClick(field.id)}
