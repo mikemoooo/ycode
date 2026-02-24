@@ -144,16 +144,30 @@ export default function TypographyControls({ layer, onLayerUpdate, activeTextSty
 
   // Handle letter spacing change (debounced for text input)
   const handleLetterSpacingChange = (value: string) => {
-    setLetterSpacingInput(value); // Update local state immediately (spaces auto-stripped by hook)
+    setLetterSpacingInput(value);
     const sanitized = removeSpaces(value);
     debouncedUpdateDesignProperty('typography', 'letterSpacing', sanitized || null);
   };
 
+  // Handle letter spacing stepper (round to 1 decimal to avoid floating point noise)
+  const handleLetterSpacingStepper = (value: string) => {
+    const num = parseFloat(value);
+    const rounded = !isNaN(num) ? String(Math.round(num * 10) / 10) : value;
+    handleLetterSpacingChange(rounded);
+  };
+
   // Handle line height change (debounced for text input)
   const handleLineHeightChange = (value: string) => {
-    setLineHeightInput(value); // Update local state immediately (spaces auto-stripped by hook)
+    setLineHeightInput(value);
     const sanitized = removeSpaces(value);
     debouncedUpdateDesignProperty('typography', 'lineHeight', sanitized || null);
+  };
+
+  // Handle line height stepper (round to 1 decimal to avoid floating point noise)
+  const handleLineHeightStepper = (value: string) => {
+    const num = parseFloat(value);
+    const rounded = !isNaN(num) ? String(Math.round(num * 10) / 10) : value;
+    handleLineHeightChange(rounded);
   };
 
   // Debounced handler for keyboard-typed hex values
@@ -382,7 +396,9 @@ export default function TypographyControls({ layer, onLayerUpdate, activeTextSty
                   className="pr-0!"
                   value={letterSpacingInput}
                   onChange={(e) => handleLetterSpacingChange(e.target.value)}
+                  onStepperChange={handleLetterSpacingStepper}
                   stepper
+                  step="0.1"
                   min="0"
                 />
               </InputGroup>
@@ -403,7 +419,9 @@ export default function TypographyControls({ layer, onLayerUpdate, activeTextSty
                   className="pr-0!"
                   value={lineHeightInput}
                   onChange={(e) => handleLineHeightChange(e.target.value)}
+                  onStepperChange={handleLineHeightStepper}
                   stepper
+                  step="0.1"
                   min="0"
                 />
               </InputGroup>

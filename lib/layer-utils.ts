@@ -3,7 +3,7 @@
  */
 
 import { Layer, FieldVariable, CollectionVariable, CollectionItemWithValues, CollectionField, Component, Breakpoint, LayerVariables, DesignColorVariable, BoundColorStop } from '@/types';
-import { cn, generateId } from '@/lib/utils';
+import { generateId } from '@/lib/utils';
 import { iconExists, IconProps } from '@/components/ui/icon';
 import { getBlockIcon, getBlockName } from '@/lib/templates/blocks';
 import { resolveInlineVariablesFromData } from '@/lib/inline-variables';
@@ -359,13 +359,16 @@ export function getHtmlTag(layer: Layer): string {
 
 /**
  * Get classes as string (support both string and array formats)
- * Uses cn() to ensure proper class merging and conflict resolution
+ * Does NOT use cn()/twMerge because our own setBreakpointClass already
+ * handles property-aware conflict resolution. twMerge incorrectly removes
+ * leading-* classes when text-[...] is present (it treats font-size as
+ * overriding line-height, which is wrong for arbitrary values).
  */
 export function getClassesString(layer: Layer): string {
   if (Array.isArray(layer.classes)) {
-    return cn(...layer.classes);
+    return layer.classes.join(' ');
   }
-  return cn(layer.classes || '');
+  return layer.classes || '';
 }
 
 /**

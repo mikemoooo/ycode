@@ -39,6 +39,12 @@ export function useDesignSync({
   // Determine if we're editing a text style or the layer itself
   const isTextStyleMode = !!activeTextStyleKey;
 
+  // Optimistic layer ref: always holds the latest known layer state.
+  // Updated during render AND immediately after store updates so that
+  // subsequent debounced calls never read a stale closure.
+  const layerRef = useRef(layer);
+  layerRef.current = layer;
+
   // Get the current design and classes source (layer or text style)
   // Falls back to DEFAULT_TEXT_STYLES when layer doesn't have custom text styles
   const getDesignSource = useCallback(() => {
@@ -74,7 +80,10 @@ export function useDesignSync({
       property: string,
       value: string | null
     ) => {
-      if (!layer) return;
+      // Read from the optimistic ref so debounced calls always see the
+      // most recent layer state, even if React hasn't re-rendered yet
+      const currentLayer = layerRef.current;
+      if (!currentLayer) return;
 
       // Auto-apply dynamicStyle mark when editing text
       // - If there's a selection: ALWAYS create a new style (enables stacking)
@@ -104,7 +113,7 @@ export function useDesignSync({
       // Text Style Mode: Update layer.textStyles[key]
       // Initialize with DEFAULT_TEXT_STYLES if layer doesn't have textStyles yet
       if (effectiveIsTextStyleMode && effectiveTextStyleKey) {
-        const currentTextStyles = layer.textStyles ?? { ...DEFAULT_TEXT_STYLES };
+        const currentTextStyles = currentLayer.textStyles ?? { ...DEFAULT_TEXT_STYLES };
         const currentTextStyle = currentTextStyles[effectiveTextStyleKey] || {};
         const currentDesign = currentTextStyle.design || {};
         const categoryData = currentDesign[category] || {};
@@ -139,17 +148,20 @@ export function useDesignSync({
           classes: updatedClasses.join(' '),
         };
 
-        onLayerUpdate(layer.id, {
-          textStyles: {
-            ...currentTextStyles,
-            [effectiveTextStyleKey]: updatedTextStyle,
-          },
-        });
+        const textStylesUpdate = {
+          ...currentTextStyles,
+          [effectiveTextStyleKey]: updatedTextStyle,
+        };
+
+        // Optimistically update the ref so the next call sees this change
+        layerRef.current = { ...currentLayer, textStyles: textStylesUpdate };
+
+        onLayerUpdate(currentLayer.id, { textStyles: textStylesUpdate });
         return;
       }
 
       // Normal Mode: Update layer directly
-      const currentDesign = layer.design || {};
+      const currentDesign = currentLayer.design || {};
       const categoryData = currentDesign[category] || {};
 
       const updatedDesign = {
@@ -170,9 +182,9 @@ export function useDesignSync({
       const newClass = value ? propertyToClass(category, property, value) : null;
 
       // 3. Get existing classes as array
-      const existingClasses = Array.isArray(layer.classes)
-        ? layer.classes
-        : (layer.classes || '').split(' ').filter(Boolean);
+      const existingClasses = Array.isArray(currentLayer.classes)
+        ? currentLayer.classes
+        : (currentLayer.classes || '').split(' ').filter(Boolean);
 
       // 4. Apply breakpoint-aware class replacement with UI state support
       // Uses setBreakpointClass which applies correct prefix (desktop → '', tablet → 'max-lg:', mobile → 'max-md:')
@@ -189,7 +201,7 @@ export function useDesignSync({
       // If layer has a style applied, track changes as overrides
       // Note: Use join instead of cn() because setBreakpointClass already handles
       // property-aware conflict resolution
-      const styledLayer = updateStyledLayer(layer, {
+      const styledLayer = updateStyledLayer(currentLayer, {
         design: updatedDesign,
         classes: updatedClasses.join(' '),
       });
@@ -201,14 +213,24 @@ export function useDesignSync({
         design: styledLayer.design,
         classes: styledLayer.classes,
       };
-      if (styledLayer.styleOverrides !== layer.styleOverrides) {
+      if (styledLayer.styleOverrides !== currentLayer.styleOverrides) {
         finalUpdate.styleOverrides = styledLayer.styleOverrides;
       }
 
-      onLayerUpdate(layer.id, finalUpdate);
+      // Optimistically update the ref so subsequent debounced calls
+      // (which may fire before React re-renders) see the latest classes
+      const classesString = updatedClasses.join(' ');
+      layerRef.current = {
+        ...currentLayer,
+        design: updatedDesign,
+        classes: classesString,
+        ...(finalUpdate.styleOverrides !== undefined ? { styleOverrides: finalUpdate.styleOverrides } : {}),
+      };
+
+      onLayerUpdate(currentLayer.id, finalUpdate);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isTextStyleMode excluded to prevent unnecessary re-creations
-    [layer, onLayerUpdate, activeBreakpoint, activeUIState, isTextStyleMode, activeTextStyleKey, isTextEditing, ensureDynamicStyleApplied, hasTextSelection]
+    [onLayerUpdate, activeBreakpoint, activeUIState, isTextStyleMode, activeTextStyleKey, isTextEditing, ensureDynamicStyleApplied, hasTextSelection]
   );
 
   /**
@@ -221,13 +243,14 @@ export function useDesignSync({
       property: string;
       value: string | null;
     }[]) => {
-      if (!layer) return;
+      const currentLayer = layerRef.current;
+      if (!currentLayer) return;
 
-      let currentClasses = Array.isArray(layer.classes)
-        ? [...layer.classes]
-        : (layer.classes || '').split(' ').filter(Boolean);
+      let currentClasses = Array.isArray(currentLayer.classes)
+        ? [...currentLayer.classes]
+        : (currentLayer.classes || '').split(' ').filter(Boolean);
 
-      const currentDesign = layer.design || {};
+      const currentDesign = currentLayer.design || {};
       const updatedDesign = { ...currentDesign };
 
       // Process all updates
@@ -255,15 +278,24 @@ export function useDesignSync({
         );
       });
 
+      const classesString = currentClasses.join(' ');
+
+      // Optimistically update the ref
+      layerRef.current = {
+        ...currentLayer,
+        design: updatedDesign,
+        classes: classesString,
+      };
+
       // Apply all updates at once
       // Note: Use join instead of cn() because setBreakpointClass already handles
       // property-aware conflict resolution
-      onLayerUpdate(layer.id, {
+      onLayerUpdate(currentLayer.id, {
         design: updatedDesign,
-        classes: currentClasses.join(' '),
+        classes: classesString,
       });
     },
-    [layer, onLayerUpdate, activeBreakpoint, activeUIState]
+    [onLayerUpdate, activeBreakpoint, activeUIState]
   );
 
   /**
@@ -287,8 +319,8 @@ export function useDesignSync({
         if (classes.length === 0) {
           // Fallback to design object if no classes
           if (!textStyle?.design?.[category]) return undefined;
-          const categoryData = textStyle.design[category] as Record<string, any>;
-          return categoryData[property];
+          const categoryData = textStyle.design[category] as Record<string, unknown>;
+          return categoryData[property] as string | undefined;
         }
 
         const { value: inheritedClass } = getInheritedValue(classes, property, activeBreakpoint, activeUIState);
@@ -308,8 +340,8 @@ export function useDesignSync({
       if (classes.length === 0) {
         // Fallback to design object if no classes at all
         if (!layer.design?.[category]) return undefined;
-        const categoryData = layer.design[category] as Record<string, any>;
-        return categoryData[property];
+        const categoryData = layer.design[category] as Record<string, unknown>;
+        return categoryData[property] as string | undefined;
       }
 
       // Use inheritance to get the value that will actually apply (desktop → tablet → mobile)
@@ -348,9 +380,10 @@ export function useDesignSync({
    */
   const resetDesignCategory = useCallback(
     (category: keyof NonNullable<Layer['design']>) => {
-      if (!layer) return;
+      const currentLayer = layerRef.current;
+      if (!currentLayer) return;
 
-      const currentDesign = layer.design || {};
+      const currentDesign = currentLayer.design || {};
       const categoryData = currentDesign[category];
 
       if (!categoryData) return;
@@ -359,9 +392,9 @@ export function useDesignSync({
       const properties = Object.keys(categoryData).filter(key => key !== 'isActive');
 
       // Remove all conflicting classes
-      let currentClasses = Array.isArray(layer.classes)
-        ? [...layer.classes]
-        : (layer.classes || '').split(' ').filter(Boolean);
+      let currentClasses = Array.isArray(currentLayer.classes)
+        ? [...currentLayer.classes]
+        : (currentLayer.classes || '').split(' ').filter(Boolean);
 
       properties.forEach(property => {
         currentClasses = replaceConflictingClasses(currentClasses, property, null);
@@ -371,14 +404,19 @@ export function useDesignSync({
       const updatedDesign = { ...currentDesign };
       delete updatedDesign[category];
 
+      const classesString = currentClasses.join(' ');
+
+      // Optimistically update the ref
+      layerRef.current = { ...currentLayer, design: updatedDesign, classes: classesString };
+
       // Note: Use join instead of cn() because replaceConflictingClasses already handles
       // property-aware conflict resolution
-      onLayerUpdate(layer.id, {
+      onLayerUpdate(currentLayer.id, {
         design: updatedDesign,
-        classes: currentClasses.join(' '),
+        classes: classesString,
       });
     },
-    [layer, onLayerUpdate]
+    [onLayerUpdate]
   );
 
   /**
@@ -387,23 +425,27 @@ export function useDesignSync({
    */
   const syncClassesToDesign = useCallback(
     (classes: string) => {
-      if (!layer) return;
+      const currentLayer = layerRef.current;
+      if (!currentLayer) return;
 
-      // For now, we keep the existing design object
-      // and only update classes
-      // Full bidirectional sync can be added later if needed
+      // Optimistically update the ref
+      layerRef.current = { ...currentLayer, classes };
 
-      onLayerUpdate(layer.id, {
+      onLayerUpdate(currentLayer.id, {
         classes,
       });
     },
-    [layer, onLayerUpdate]
+    [onLayerUpdate]
   );
 
   /**
    * Debounced version of updateDesignProperty for text inputs
    * Use this for inputs where users type values (e.g., spacing, sizing)
    * to avoid flooding the canvas with updates on every keystroke
+   *
+   * Uses per-property debounced functions so that updating one property
+   * (e.g., fontSize) never cancels a pending update to another property
+   * (e.g., lineHeight). Each property gets its own debounce timer.
    *
    * IMPORTANT: This implementation avoids stale closure issues by:
    * 1. Using a ref to always access the latest updateDesignProperty
@@ -418,34 +460,39 @@ export function useDesignSync({
   // Track the current layer ID to detect layer changes
   const currentLayerIdRef = useRef(layer?.id);
 
-  // Create a stable debounced function that always calls the latest updateDesignProperty
-  const debouncedFnRef = useRef(
-    debounce(
-      (
-        category: keyof NonNullable<Layer['design']>,
-        property: string,
-        value: string | null
-      ) => {
-        updateDesignPropertyRef.current(category, property, value);
-      },
-      150
-    )
-  );
+  // Per-property debounced functions so properties don't interfere with each other
+  const debouncedFnMapRef = useRef<Map<string, ReturnType<typeof debounce>>>(new Map());
 
-  // Cancel pending debounced calls when layer changes to prevent stale updates
+  const getDebouncedFn = useCallback((property: string) => {
+    let fn = debouncedFnMapRef.current.get(property);
+    if (!fn) {
+      fn = debounce(
+        (
+          category: keyof NonNullable<Layer['design']>,
+          prop: string,
+          value: string | null
+        ) => {
+          updateDesignPropertyRef.current(category, prop, value);
+        },
+        150
+      );
+      debouncedFnMapRef.current.set(property, fn);
+    }
+    return fn;
+  }, []);
+
+  // Cancel all pending debounced calls when layer changes to prevent stale updates
   useEffect(() => {
     if (currentLayerIdRef.current !== layer?.id) {
-      // Layer changed - cancel any pending debounced calls
-      debouncedFnRef.current.cancel();
+      debouncedFnMapRef.current.forEach(fn => fn.cancel());
       currentLayerIdRef.current = layer?.id;
     }
   }, [layer?.id]);
 
   // Cleanup on unmount
   useEffect(() => {
-    const debouncedFn = debouncedFnRef.current;
     return () => {
-      debouncedFn.cancel();
+      debouncedFnMapRef.current.forEach(fn => fn.cancel());
     };
   }, []);
 
@@ -456,9 +503,9 @@ export function useDesignSync({
       property: string,
       value: string | null
     ) => {
-      debouncedFnRef.current(category, property, value);
+      getDebouncedFn(property)(category, property, value);
     },
-    []
+    [getDebouncedFn]
   );
 
   return {

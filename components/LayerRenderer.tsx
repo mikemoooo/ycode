@@ -33,7 +33,7 @@ import { useCollectionsStore } from '@/stores/useCollectionsStore';
 import { useAssetsStore } from '@/stores/useAssetsStore';
 import { ShimmerSkeleton } from '@/components/ui/shimmer-skeleton';
 import { combineBgValues, mergeStaticBgVars } from '@/lib/tailwind-class-mapper';
-import { cn } from '@/lib/utils';
+import { clsx } from 'clsx';
 import PaginatedCollection from '@/components/PaginatedCollection';
 import LoadMoreCollection from '@/components/LoadMoreCollection';
 import LocaleSelector from '@/components/layers/LocaleSelector';
@@ -1042,23 +1042,24 @@ const LayerItem: React.FC<{
   const showProjection = projected && activeLayerId && activeLayerId !== layer.id;
 
   // Build className with editor states if in edit mode
-  // Use cn() for cleaner conditional class handling and automatic conflict resolution
   // When layer tag is p and has text, add paragraph default classes (block, margin) so the wrapper displays correctly
   const paragraphClasses = htmlTag === 'p' && layer.variables?.text
     ? getTextStyleClasses(layer.textStyles, 'paragraph')
     : '';
 
-  const fullClassName = isEditMode ? cn(
+  // Use clsx (not cn/twMerge) to preserve all layer classes intact.
+  // twMerge incorrectly removes leading-* when text-[...] is present
+  // because it treats font-size as overriding line-height. Our own
+  // setBreakpointClass already handles property-aware conflict resolution.
+  const fullClassName = isEditMode ? clsx(
     classesString,
     paragraphClasses,
     enableDragDrop && !isEditing && !isLockedByOther && 'cursor-default',
-    // Selection/hover outlines are now rendered by SelectionOverlay component (outside iframe)
     isDragging && 'opacity-30',
     showProjection && 'outline outline-1 outline-dashed outline-blue-400 bg-blue-50/10',
     isLockedByOther && 'opacity-90 pointer-events-none select-none',
-    // Add ycode-layer class for editor styling
     'ycode-layer'
-  ) : cn(classesString, paragraphClasses);
+  ) : clsx(classesString, paragraphClasses);
 
   // Check if layer should be hidden (hide completely in both edit mode and public pages)
   if (layer.settings?.hidden) {

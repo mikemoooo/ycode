@@ -154,6 +154,7 @@ export function SelectionOverlay({
 
     // MutationObserver for DOM changes inside iframe
     let mutationTimeout: ReturnType<typeof setTimeout> | null = null;
+    let mutationRafId: number | null = null;
     const mutationObserver = new MutationObserver((mutations) => {
       // Check if any mutation is a structural change (element added/removed)
       const hasStructuralChange = mutations.some(m => m.type === 'childList');
@@ -171,8 +172,16 @@ export function SelectionOverlay({
           updateAllOutlines(isDraggingRef.current);
         }, 150);
       } else {
-        // Attribute-only changes (class/style) - update immediately
-        updateAllOutlines(isDraggingRef.current);
+        // Attribute-only changes (class/style) - defer to next frame so
+        // Tailwind Browser CDN has time to generate CSS for new classes
+        // and the browser can reflow before we measure dimensions
+        if (mutationRafId) cancelAnimationFrame(mutationRafId);
+        mutationRafId = requestAnimationFrame(() => {
+          mutationRafId = requestAnimationFrame(() => {
+            updateAllOutlines(isDraggingRef.current);
+            mutationRafId = null;
+          });
+        });
       }
     });
 
@@ -213,6 +222,7 @@ export function SelectionOverlay({
       if (scrollTimeout) clearTimeout(scrollTimeout);
       if (viewportTimeout) clearTimeout(viewportTimeout);
       if (mutationTimeout) clearTimeout(mutationTimeout);
+      if (mutationRafId) cancelAnimationFrame(mutationRafId);
       mutationObserver.disconnect();
       containerElement.removeEventListener('scroll', handleScroll);
       iframeDoc.removeEventListener('scroll', handleScroll);
